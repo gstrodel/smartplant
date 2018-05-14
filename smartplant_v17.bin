@@ -1,0 +1,177 @@
+// -----------------------------------------
+// SmartPlant31 - ver 17
+// Created 3/15/17 by Gordon Strodel
+// -----------------------------------------
+// Release Notes:
+// - Fixed data type issues on new publish string (ints, floats)
+//------------------------------------------
+
+
+// Specs for the Thirsty Plant Product
+PRODUCT_ID(732);
+PRODUCT_VERSION(17);
+STARTUP(WiFi.selectAntenna(ANT_EXTERNAL)); // selects the u.FL antenna
+
+
+// This #include statement was automatically added by the Particle IDE.
+#include <Ubidots.h>
+#include <Adafruit_DHT.h>
+#include <PowerShield.h>
+
+// Initialize Startup Variables
+int boardLed = D7; // blue board LED
+int cap_sensor = A2; //Capacitive Soil Sensor
+int temperature = 0; // DHT Temp in C
+int temperatureF = 0; // DHT Temp in F
+int humidity = 0; // DHT Humidity
+int cap_sensor_val = 0;  // Defaults the cap sensor value to 0
+int tweet_threashold_val = 2100; //raw sensor value for which you should tweet
+unsigned long lastTextTime = 0;
+int wifi_strength = 0;
+float cellVoltage = 0;
+float stateOfCharge = 0;
+int i=0; //counter for while loop for re-trying ubidots transmission
+
+#define TEXTING_INTERVAL    240000 // This code runs for 13+ seconds = 1300 milliseconds.
+#define DHTTYPE 22       // Sensor type DHT11/21/22/AM2301/AM2302
+#define DHTPIN 4           // Digital pin for communications
+#define TOKEN "BBFF-pYegf9m0bqCNuKhD851ChXveNJyBEr" //Ubidots token for Smartplant in Ubidots for Business
+//#define TOKEN "" //Ubidots token for Smartplant in Ubidots for Business
+// #define TOKEN "MVQv4sU1l3Zxn9b5fVfi4wrOxxKAWQ" //Ubidots token for Smartplant in Ubidots Free
+
+
+//STARTUP(WiFi.selectAntenna(ANT_EXTERNAL)); // selects the u.FL antenna
+PowerShield batteryMonitor; //Initiates the power shield
+DHT dht(DHTPIN, DHTTYPE); //initialized the DHT code
+Ubidots ubidots(TOKEN);  //initializes Uidots token
+
+
+
+
+void setup() {
+    Serial.begin(9600);
+	pinMode(boardLed,OUTPUT); // Our on-board LED is output as well
+    pinMode(cap_sensor, INPUT); //Capacitive Sensor is an input
+    String myID = System.deviceID();
+    #define DATA_SOURCE_NAME "Photon_" + myID
+    ubidots.setDebug(true); //Uncomment this line for printing debug messages
+}
+
+
+void loop() {
+    Serial.printlnf("starting loop");
+    Particle.process();
+    Wire.begin();
+    Time.zone(-5);  // Set time zone to Eastern USA time
+    wifi_strength = WiFi.RSSI();
+
+    Serial.printlnf("starting battery monitor");
+    batteryMonitor.reset();
+    batteryMonitor.quickStart();
+    delay(1000);
+    cellVoltage = batteryMonitor.getVCell();
+    stateOfCharge = batteryMonitor.getSoC();
+    delay(100);
+    Serial.printlnf("saving battery specs");
+
+    // Start DHT sensor
+    Serial.printlnf("starting DHT");
+    dht.begin();
+    Serial.printlnf("reading cap sensor");
+    cap_sensor_val = analogRead(cap_sensor); // read sensor
+    unsigned long now = millis(); // Capture the time readings associated with the soil measurement
+
+    // Temperature and Humidity measurement from the DHT sensor
+    Serial.printlnf("reading DHT for temp and humidity");
+    temperatureF = dht.getTempFarenheit();     //temperatureF = (9.0/5.0 * temperature) + 32.0;
+    humidity = dht.getHumidity();
+
+    // Check if any reads failed from the DHT and exit early (to try again).
+	if (isnan(humidity) || isnan(temperatureF)) {
+		Particle.publish("DEBUG","Failed to read from DHT sensor!",60,PRIVATE); //,NO_ACK);
+		return;
+	}
+
+    // New Code to Push Data to MS Azure Storage for visualization -- Added in v13
+    time_t time = Time.now();
+    Time.format(time, TIME_FORMAT_ISO8601_FULL);
+
+    // Create publish string
+    // Time|Humidity|TempF|Soil|WIfi|State of Charge|Cell Voltage
+    String dataAZ = String(time) + "|";;
+    dataAZ = dataAZ + String(humidity) + "|";
+    dataAZ = dataAZ + String(temperatureF) + "|";
+    dataAZ = dataAZ + String(cap_sensor_val) + "|";
+    dataAZ = dataAZ + String(wifi_strength) + "|";
+    dataAZ = dataAZ + String(stateOfCharge) + "|";
+    dataAZ = dataAZ + String(cellVoltage) + "|";
+    Serial.printlnf(dataAZ);
+    Particle.publish("sendDataAZ",dataAZ,60, PRIVATE); //,NO_ACK);
+    delay(5000);
+
+
+    // Testing new parsed out webhook format
+    // See example for more info: https://docs.particle.io/reference/webhooks/#custom-variables
+    String location = "42.326958,-71.1048198";
+    String parsed_data = String::format(
+    "{ \"location\": \"%s\", \"humidity\": %d, \"tempF\": %d, \"soil\": %d, \"wifi_rssi\": %d, \"soc\": %f, \"voltage\": %f}",
+    location.c_str(), humidity, temperatureF, cap_sensor_val, wifi_strength, stateOfCharge, cellVoltage);
+    Particle.publish("sendDataAzure", parsed_data, 60, PRIVATE);
+    delay(5000);
+
+    // Publish a new Event for Tweeting if the plant needs water
+    Serial.printlnf("checking for tweet");
+    if  (cap_sensor_val >= tweet_threashold_val ) {
+
+        if (now - lastTextTime >= TEXTING_INTERVAL) {
+            Particle.publish("Tweet_Notification",String(cap_sensor_val),60,PRIVATE); //,NO_ACK);
+            delay(5000);
+            lastTextTime = now;
+       }
+       else { // Publish little status update if enough time has not gone by...
+           Particle.publish("Status", String(now)+"|"+String(lastTextTime+TEXTING_INTERVAL)+"|"+String(TEXTING_INTERVAL),60,PRIVATE); //,NO_ACK);
+            delay(5000);
+       }
+    }
+
+    // Publish Data to Ubidots
+    ubidots.setMethod(TYPE_TCP);
+    ubidots.add("TempF", temperatureF);  // Change for your variable name
+    ubidots.add("Humidity", humidity);
+    ubidots.add("Soil_Sensor", cap_sensor_val);
+    ubidots.add("wifi", wifi_strength);
+    ubidots.add("state_of_charge", stateOfCharge);
+    ubidots.add("cell_voltage", cellVoltage);
+    
+    if(ubidots.sendAll()) {
+        // Do something if values were sent properly
+        delay(3000);
+        Serial.println("Values sent by the device");
+    }
+    else {
+         while(i<=10 and ubidots.sendAll()==false) {
+         i++; //Counter starts at 0, increment by 1
+         Particle.publish("DEBUG","Data not sent to Ubidots! Re-try #: "+ String(i),60,PRIVATE); //,NO_ACK);
+         delay(5000);
+         ubidots.sendAll(); // try resending values
+         delay(5000);
+         Particle.publish("DEBUG-Ubidots","Response: " + String(ERROR_VALUE),60,PRIVATE); //,NO_ACK);
+         delay(5000);
+         }
+         // Exits While loop upon successful send or more than 10 tries
+         i=0; //resets counter to 0
+
+    }
+
+
+    Serial.printlnf("sleep");
+    if(stateOfCharge<=30) {
+        System.sleep(D1, RISING, 1800);    //1800 = 30min
+    }
+    else {
+        System.sleep(D1, RISING, 1200);
+    }
+    //System.sleep(D1,RISING,1200); // 1200 = 20min, 300 = 5min
+
+}
+
