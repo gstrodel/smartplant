@@ -1,0 +1,108 @@
+#include "Particle.h"
+#include <limits.h>
+#include <PietteTech_DHT.h>
+
+// This strips the path from the filename
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+
+// Initialize Startup Variables
+int boardLed = D7; // blue board LED
+int cap_sensor = A5; //Capacitive Soil Sensor
+int red_led = D0; //Capacitive Soil Sensor
+int temperature = 0; // DHT Temp in C
+int temperatureF = 0; // DHT Temp in F
+int humidity = 0; // DHT Humidity
+int dew_point = 0; // DHT Dew Point
+int cap_sensor_val = 0;  // Defaults the cap sensor value to 0
+int i=0; //counter for while loop for re-trying ubidots transmission
+#define DHTTYPE  DHT22       // Sensor type DHT11/21/22/AM2301/AM2302
+#define DHTPIN   D4          // Digital pin for communications
+String location = "42.326958,-71.1048198";
+
+PietteTech_DHT DHT(DHTPIN, DHTTYPE); //initialized the DHT code
+
+void setup() {
+    Serial.begin(9600);
+	pinMode(boardLed,OUTPUT); // Our on-board LED is output as well
+    pinMode(cap_sensor, INPUT); //Capacitive Sensor is an input
+    #define DATA_SOURCE_NAME "Xenon_" + myID
+    //ubidots.setDebug(true);  // Uncomment this line for printing debug messages
+}
+
+void loop() {
+    Serial.printlnf("starting loop");
+    Time.zone(-5);  // Set time zone to Eastern USA time
+    
+    // Battery Voltage
+    //The Xenon does not have a fuel gauge chip, however you can determine the voltage of the LiPo battery, if present.
+    //The constant 0.0011224 is based on the voltage divider circuit (R1 = 806K, R2 = 2M) 
+    // that lowers the 3.6V LiPo battery output to a value that can be read by the ADC.
+    // https://docs.particle.io/reference/device-os/firmware/xenon/#battery-voltage
+    Serial.printlnf("reading battery voltage");
+    float voltage = analogRead(BATT) * 0.0011224;
+
+    // Start DHT sensor
+    Serial.printlnf("starting DHT");
+      Serial.print("\n");
+      Serial.print(": Retrieving information from sensor: ");
+      Serial.print("Read sensor: ");
+    
+      int result = DHT.acquireAndWait(1000); // wait up to 1 sec (default indefinitely)
+    
+      switch (result) {
+      case DHTLIB_OK:
+        Serial.println("OK");
+        break;
+      case DHTLIB_ERROR_CHECKSUM:
+        Serial.println("Error\n\r\tChecksum error");
+        break;
+      case DHTLIB_ERROR_ISR_TIMEOUT:
+        Serial.println("Error\n\r\tISR time out error");
+        break;
+      case DHTLIB_ERROR_RESPONSE_TIMEOUT:
+        Serial.println("Error\n\r\tResponse time out error");
+        break;
+      case DHTLIB_ERROR_DATA_TIMEOUT:
+        Serial.println("Error\n\r\tData time out error");
+        break;
+      case DHTLIB_ERROR_ACQUIRING:
+        Serial.println("Error\n\r\tAcquiring");
+        break;
+      case DHTLIB_ERROR_DELTA:
+        Serial.println("Error\n\r\tDelta time to small");
+        break;
+      case DHTLIB_ERROR_NOTSTARTED:
+        Serial.println("Error\n\r\tNot started");
+        break;
+      default:
+        Serial.println("Unknown error");
+        break;
+      }
+      
+    // Temperature and Humidity measurement from the DHT sensor
+    Serial.printlnf("reading DHT for temp and humidity");
+    temperatureF = DHT.getFahrenheit();     //temperatureF = (9.0/5.0 * temperature) + 32.0;
+    humidity = DHT.getHumidity();
+    dew_point = DHT.getDewPoint();
+    String myID = System.deviceID();
+
+    Serial.printlnf("reading cap sensor");
+    cap_sensor_val = analogRead(cap_sensor); // read sensor
+   
+    time_t time = Time.now();
+    String sensor_time= String(Time.format(time, "%m/%d/%Y %H:%M")); // fully qualified (e.g. current time with custom format)
+    Serial.println(sensor_time);
+
+    // New Code to Push Data to MS Azure Storage for visualization -- Added in v13
+    // Testing new parsed out webhook format in JSON
+    // See example for more info: https://docs.particle.io/reference/webhooks/#custom-variables
+    String parsed_data = String::format(
+    "{ \"location\": \"%s\", \"device\": \"%s\", \"humidity\": %d, \"tempF\": %d, \"soil\": %d, \"voltage\": %f, \"sensor_time\": \"%s\"}",
+    location.c_str(), myID.c_str(), humidity, temperatureF, cap_sensor_val, voltage, sensor_time.c_str());
+    Particle.publish("sendDataAzure", parsed_data, 60, PRIVATE);
+    delay(5000);
+
+    //System.sleep(D1, RISING, 120);
+    delay(1000*60); //60 second wait
+
+}
