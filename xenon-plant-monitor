@@ -1,9 +1,20 @@
+// -----------------------------------------
+// Xenon version of the Smartplant Code
+// -----------------------------------------
+// Release Notes:
+// -  3/19/19 Added Ubidots Free Code for data saving
+//------------------------------------------
+
 #include "Particle.h"
 #include <limits.h>
 #include <PietteTech_DHT.h>
 
 // This strips the path from the filename
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+
+
+//SYSTEM_THREAD(ENABLED);
+
 
 // Initialize Startup Variables
 int boardLed = D7; // blue board LED
@@ -19,15 +30,17 @@ int i=0; //counter for while loop for re-trying ubidots transmission
 #define DHTPIN   D4          // Digital pin for communications
 String location = "42.326958,-71.1048198";
 
+
 PietteTech_DHT DHT(DHTPIN, DHTTYPE); //initialized the DHT code
+
 
 void setup() {
     Serial.begin(9600);
 	pinMode(boardLed,OUTPUT); // Our on-board LED is output as well
     pinMode(cap_sensor, INPUT); //Capacitive Sensor is an input
     #define DATA_SOURCE_NAME "Xenon_" + myID
-    //ubidots.setDebug(true);  // Uncomment this line for printing debug messages
 }
+
 
 void loop() {
     Serial.printlnf("starting loop");
@@ -102,7 +115,18 @@ void loop() {
     Particle.publish("sendDataAzure", parsed_data, 60, PRIVATE);
     delay(5000);
 
-    //System.sleep(D1, RISING, 120);
+/*
+    Particle.publish("volts","Voltage (V): "+ String(voltage),60,PRIVATE);
+    delay(3000);
+    Particle.publish("tempF","Temperature (F): "+ String(temperatureF),60,PRIVATE);
+    delay(3000);
+    Particle.publish("humidity","Humidity (%): "+ String(humidity),60,PRIVATE);
+    delay(3000);
+    Particle.publish("soil","Soil Sensor (raw): "+ String(cap_sensor_val),60,PRIVATE);
+    delay(5000);
+*/
+
     delay(1000*60); //60 second wait
 
 }
+
